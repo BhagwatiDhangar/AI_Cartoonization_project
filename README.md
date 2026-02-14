@@ -20,3 +20,26 @@ and provides a Streamlit-based web interface.
 - Created Users table
 - Inserted sample user data
 - Verified insertion using SELECT query
+# AI-Powered Image Cartoonization Platform
+
+## Project Overview
+This project is a web-based application that converts real-world images into cartoon-style images using OpenCV and Streamlit. Users can upload images, select from multiple cartoon styles, preview the result side-by-side with the original, and download the cartoonized image.
+
+## Features
+- Upload JPG/PNG images
+- Multiple cartoon styles: Classic Cartoon, Sketch, Pencil Color
+- Side-by-side comparison: Original vs Cartoon
+- Download cartoon image
+- Clean and professional UI using Streamlit
+
+## Technologies Used
+- Python 3.8+
+- OpenCV
+- Pillow (PIL)
+- Streamlit
+- NumPy
+
+## Setup Instructions
+1. Clone the repository:
+   ```bash
+   git clone <your-repo-link>
