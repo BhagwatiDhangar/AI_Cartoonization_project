@@ -1,85 +1,94 @@
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 import streamlit as st
 from backend.auth import login_user
+from datetime import datetime
 
-st.set_page_config(
-    page_title="Login | AI Cartoonization",
-    page_icon="🎨",
-    layout="centered"
-)
+st.set_page_config(page_title="Login", layout="centered")
 
-# Session state initialize
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
+# -------- SESSION INIT --------
+if "login_attempts" not in st.session_state:
+    st.session_state.login_attempts = 0
 
-if "user" not in st.session_state:
-    st.session_state.user = None
+if "account_locked" not in st.session_state:
+    st.session_state.account_locked = False
 
-# ---------------- LOGIN PAGE ----------------
-if not st.session_state.logged_in:
+# -------- CSS --------
+st.markdown("""
+<style>
+[data-testid="stAppViewContainer"] {
+    background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+}
 
-    st.markdown("""
-    <style>
-    body { background-color: #0f172a; }
-    .card {
-        background-color: #1e293b;
-        padding: 30px;
-        border-radius: 15px;
-        box-shadow: 0px 0px 20px rgba(0,0,0,0.4);
-    }
-    h1 { color: #38bdf8; text-align: center; }
-    label { color: white !important; }
-    </style>
-    """, unsafe_allow_html=True)
+header {visibility: hidden;}
 
-    st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.markdown("<h1>🔐 Login</h1>", unsafe_allow_html=True)
+.block-container {
+    max-width: 420px;
+    padding-top: 40px;
+}
+</style>
+""", unsafe_allow_html=True)
 
-    email_or_username = st.text_input("📧 Email or Username")
-    password = st.text_input("🔒 Password", type="password")
+# -------- UI --------
+st.markdown("## 🔐 Sign In")
+st.write("Access your creative workspace")
 
-    if st.button("Login"):
-        success, result = login_user(email_or_username, password)
+email = st.text_input("Email or Username")
+password = st.text_input("Password", type="password")
+remember = st.checkbox("Remember Me")
+
+if st.session_state.account_locked:
+    st.error("🚫 Account locked after 5 failed login attempts.")
+else:
+    if st.button("SIGN IN"):
+
+        success, user = login_user(email, password)
 
         if success:
             st.session_state.logged_in = True
-            st.session_state.user = result
+            st.session_state.username = user["username"]
+            st.session_state.email = user["email"]
+            st.session_state.last_login = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            st.session_state.login_attempts = 0
+
             st.success("Login successful 🎉")
-            st.rerun()
+            st.write("Welcome,", user["username"])
+
         else:
-            st.error(result)
+            st.session_state.login_attempts += 1
+            remaining = 5 - st.session_state.login_attempts
 
-    st.markdown("</div>", unsafe_allow_html=True)
+            if st.session_state.login_attempts >= 5:
+                st.session_state.account_locked = True
+                st.error("🚫 Account locked after 5 failed attempts.")
+            else:
+                st.error(f"Invalid credentials. Attempts left: {remaining}")
 
-# ---------------- DASHBOARD ----------------
-else:
-    user = st.session_state.user
+st.divider()
 
-    st.sidebar.title("📂 Navigation")
-    page = st.sidebar.radio(
-        "Go to",
-        ["Dashboard", "Image Processing", "Payment History", "Profile", "Logout"]
-    )
+st.info("New user? Run register.py file to create account.")
+st.divider()
 
-    if page == "Dashboard":
-        st.title(f"👋 Welcome, {user['username']}!")
-        st.write("This is your dashboard.")
-        st.info("Use the sidebar to navigate.")
+if st.button("Go to Register"):
+    st.markdown("👉 Please stop this file and run:")
+    st.code("streamlit run frontend/register.py")
+st.divider()
 
-    elif page == "Image Processing":
-        st.title("🎨 Image Cartoonization")
-        st.write("Image processing module will be added here.")
-
-    elif page == "Payment History":
-        st.title("💳 Payment History")
-        st.write("Payments data will appear here.")
-
-    elif page == "Profile":
-        st.title("👤 Profile Details")
-        st.write(f"Username: {user['username']}")
-        st.write(f"Email: {user['email']}")
-
-    elif page == "Logout":
-        st.session_state.logged_in = False
-        st.session_state.user = None
-        st.success("Logged out successfully")
-        st.rerun()
+st.markdown(
+    """
+    <a href="http://localhost:8501/?page=register" target="_self">
+        <button style="
+            width:100%;
+            padding:10px;
+            border-radius:8px;
+            background:#444;
+            color:white;
+            border:none;">
+            Go to Register
+        </button>
+    </a>
+    """,
+    unsafe_allow_html=True
+)

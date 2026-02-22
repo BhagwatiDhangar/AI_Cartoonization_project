@@ -1,266 +1,644 @@
-import sys
-import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
 import streamlit as st
+import sqlite3
+import hashlib
 import cv2
 import numpy as np
 from PIL import Image
-import time
+from io import BytesIO
 from datetime import datetime
+import uuid
+import os
+import random
 
-from backend.auth import register_user, login_user
-from backend.database.models import create_tables
+# ================= PAGE CONFIG =================
+st.set_page_config(page_title="AI Cartoon Studio", layout="wide")
 
-# ---------------- CONFIG ----------------
-st.set_page_config(page_title="AI Cartoonization Studio", layout="wide")
-create_tables()
+# ================= FOLDER =================
+if not os.path.exists("uploads"):
+    os.makedirs("uploads")
 
-# ---------------- SESSION INIT ----------------
-if "page" not in st.session_state:
-    st.session_state.page = "landing"
+# ================= DATABASE =================
+conn = sqlite3.connect("app.db", check_same_thread=False)
+cursor = conn.cursor()
 
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS users(
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+username TEXT,
+email TEXT UNIQUE,
+password TEXT,
+failed_attempts INTEGER DEFAULT 0,
+account_locked INTEGER DEFAULT 0,
+last_login TEXT
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS image_history(
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+username TEXT,
+image_path TEXT,
+effect TEXT,
+created_at TEXT
+)
+""")
+
+conn.commit()
+
+# ================= SESSION =================
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 
-if "image_count" not in st.session_state:
-    st.session_state.image_count = 0
+if "page" not in st.session_state:
+    st.session_state.page = "landing"
 
-if "login_attempts" not in st.session_state:
-    st.session_state.login_attempts = 0
+if "user" not in st.session_state:
+    st.session_state.user = ""
 
-if "account_locked" not in st.session_state:
-    st.session_state.account_locked = False
+def hash_password(p):
+    return hashlib.sha256(p.encode()).hexdigest()
 
-
-# ---------------- PREMIUM CSS ----------------
+# ================= STYLE =================
 st.markdown("""
 <style>
+[data-testid="stAppViewContainer"]{
+    background: linear-gradient(-45deg,#0f2027,#203a43,#2c5364,#1b1b1b);
+    background-size:400% 400%;
+    animation: gradientBG 12s ease infinite;
+}
+@keyframes gradientBG{
+    0%{background-position:0% 50%;}
+    50%{background-position:100% 50%;}
+    100%{background-position:0% 50%;}
+}
+.block-container{
+    padding-top:2rem !important;
+}
+.box{
+    background: rgba(255,255,255,0.2);
+    backdrop-filter: blur(10px);
+    padding:20px;
+    border-radius:15px;
+    text-align:center;
+    font-weight:bold;
+    color:white;
+    border:1px solid rgba(255,255,255,0.3);
+}
+.box:hover{
+    transform:scale(1.05);
+}
+.card{
+    background:white;
+    padding:40px;
+    border-radius:20px;
+    width:420px;
+    margin:auto;
+    box-shadow:0px 10px 30px rgba(0,0,0,0.3);
+}
+.stButton>button{
+    background:#00b4d8;
+    color:white;
+    border-radius:10px;
+    padding:8px 16px;
+    border:none;
+}
+.stButton>button:hover{
+    background:#0077b6;
+}
+input{
+    border-radius:10px !important;
+            }
+
+
+            
+/* ✅ REMOVE TOP SPACE COMPLETELY */
+.block-container {
+    padding-top: 0rem !important;
+    padding-bottom: 0rem !important;
+}
+
+/* ✅ REMOVE HEADER SPACE */
+header {
+    visibility: hidden;
+}
+
+/* ✅ FULL WIDTH */
 .main {
-    background: linear-gradient(135deg, #667eea, #764ba2);
+    padding: 0rem !important;
 }
-.hero {
-    text-align: center;
-    padding: 80px 20px;
-    color: white;
+
+/* ✅ REMOVE SIDEBAR EXTRA GAP */
+[data-testid="stSidebar"] {
+    padding-top: 0rem !important;
+
 }
-.feature-card {
-    background: white;
-    padding: 25px;
-    border-radius: 15px;
-    box-shadow: 0 8px 20px rgba(0,0,0,0.1);
-    text-align: center;
+
+
+/* ✅ Remove Top Padding Only */
+.block-container {
+    padding-top: 0px !important;
 }
-.feature-card h3 { color: #333; }
-.feature-card p { color: #555; }
-.card {
-    background: white;
-    padding: 25px;
-    border-radius: 15px;
-    box-shadow: 0 6px 15px rgba(0,0,0,0.1);
+
+/* ✅ Hide Default Header Text */
+header {
+    visibility: hidden;
 }
+
+/* ✅ Full Width */
+.main {
+    padding: 0px !important;
+}
+
 </style>
-""", unsafe_allow_html=True)
 
+""",unsafe_allow_html=True)
 
-# ---------------- IMAGE EFFECTS ----------------
-def cartoon_effect(image):
-    img = np.array(image)
-    img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    gray = cv2.medianBlur(gray, 5)
-    edges = cv2.adaptiveThreshold(gray,255,
-                                  cv2.ADAPTIVE_THRESH_MEAN_C,
-                                  cv2.THRESH_BINARY,9,9)
-    color = cv2.bilateralFilter(img,9,250,250)
-    cartoon = cv2.bitwise_and(color,color,mask=edges)
-    cartoon = cv2.cvtColor(cartoon, cv2.COLOR_BGR2RGB)
-    return cartoon
+# =====================================================
+# ================= LANDING PAGE ======================
+# =====================================================
 
-def pencil_sketch_effect(image):
-    img = np.array(image)
-    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    inv = 255 - gray
-    blur = cv2.GaussianBlur(inv,(21,21),0)
-    inv_blur = 255 - blur
-    sketch = cv2.divide(gray, inv_blur, scale=256.0)
-    return cv2.cvtColor(sketch, cv2.COLOR_GRAY2RGB)
+if not st.session_state.logged_in and st.session_state.page == "landing":
 
-def black_white_effect(image):
-    img = np.array(image)
-    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    return cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
+    st.title("🎨 AI Cartoon Studio")
+    st.subheader("Modern Image Processing Platform 🚀")
 
+    col1,col2,col3,col4 = st.columns(4)
 
-# ---------------- LANDING ----------------
-def landing_page():
+    features = ["🔥 Cartoon","🧠 Edge","🎨 Sketch","🔐 Secure"]
+
+    for i,col in enumerate([col1,col2,col3,col4]):
+        with col:
+            st.markdown(f"<div class='box'>{features[i]}</div>",
+                        unsafe_allow_html=True)
+
+    st.markdown("<br><br><br>",unsafe_allow_html=True)
+
+    colA,colB = st.columns(2)
+
+    with colA:
+        if st.button("🔐 Login", use_container_width=True):
+            st.session_state.page = "login"
+            st.rerun()
+
+    with colB:
+        if st.button("📝 Register", use_container_width=True):
+            st.session_state.page = "register"
+            st.rerun()
+
+# =====================================================
+# ================= LOGIN PAGE ========================
+# ====================================================
+
+elif st.session_state.page == "login":
+
+    #st.markdown("<div class='card'>", unsafe_allow_html=True)
+
+    # 🔥 Header Inside Card
     st.markdown("""
-    <div class="hero">
-        <h1>🎨 AI Cartoonization Studio</h1>
-        <p>Transform your images with AI-powered effects.</p>
+    <div style="text-align:center;
+                font-size:22px;
+                font-weight:bold;
+                color:#00b4d8;
+                margin-bottom:20px;">
+    🔐 Login
+    <br>
+    <span style="font-size:14px;color:gray;">
+    Welcome Back 🚀
+    </span>
     </div>
     """, unsafe_allow_html=True)
 
-    col1,col2,col3 = st.columns(3)
-    with col1:
-        st.markdown('<div class="feature-card"><h3>⚡ Fast</h3><p>Instant processing</p></div>', unsafe_allow_html=True)
-    with col2:
-        st.markdown('<div class="feature-card"><h3>🎨 3 Effects</h3><p>Cartoon, Sketch, B/W</p></div>', unsafe_allow_html=True)
-    with col3:
-        st.markdown('<div class="feature-card"><h3>🔐 Secure</h3><p>Login protected</p></div>', unsafe_allow_html=True)
+    email = st.text_input("Email or Username", key="login_user")
+    password = st.text_input("Password", type="password", key="login_pass")
 
-    if st.button("🚀 Get Started"):
-        st.session_state.page = "login"
+    if st.button("Login Now"):
 
+        cursor.execute("""
+        SELECT * FROM users
+        WHERE email=? OR username=?
+        """,(email,email))
 
-# ---------------- REGISTER ----------------
-def register_page():
-    st.subheader("📝 Register")
-    username = st.text_input("Username")
-    email = st.text_input("Email")
-    password = st.text_input("Password", type="password")
+        user = cursor.fetchone()
 
-    if st.button("Register"):
-        success, message = register_user(username,email,password)
-        if success:
-            st.success(message)
-            st.session_state.page = "login"
-        else:
-            st.error(message)
+        if not user:
+            st.error("User Not Found")
 
-    if st.button("Already have an account? Login"):
-        st.session_state.page = "login"
+        elif user[5] == 1:
+            st.error("Account Locked 🔒")
 
+        elif user[3] == hash_password(password):
 
-# ---------------- LOGIN ----------------
-def login_page():
-    st.subheader("🔐 Login")
-
-    email = st.text_input("Email")
-    password = st.text_input("Password", type="password")
-    st.checkbox("Remember Me")
-
-    if st.session_state.account_locked:
-        st.error("🚫 Account locked after 5 failed attempts.")
-        return
-
-    if st.button("Login"):
-
-        success, user = login_user(email,password)
-
-        if success:
             st.session_state.logged_in = True
-            st.session_state.username = user["username"]
-            st.session_state.email = user["email"]
-            st.session_state.last_login = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-            st.session_state.login_attempts = 0
-            st.session_state.account_locked = False
+            st.session_state.user = user[1]
             st.session_state.page = "dashboard"
+            st.rerun()
 
         else:
-            st.session_state.login_attempts += 1
-            remaining = 5 - st.session_state.login_attempts
+            failed = user[4] + 1
+            lock = 1 if failed >= 5 else 0
 
-            if st.session_state.login_attempts >= 5:
-                st.session_state.account_locked = True
-                st.error("🚫 Account locked after 5 failed attempts.")
-            else:
-                st.error(f"Invalid credentials. Attempts left: {remaining}")
+            cursor.execute("""
+            UPDATE users
+            SET failed_attempts=?,account_locked=?
+            WHERE id=?
+            """,(failed,lock,user[0]))
 
-    if st.button("Forgot Password?"):
-        st.info("Password reset feature coming soon.")
+            conn.commit()
+            st.error(f"Wrong Password ❌ Attempts: {failed}/5")
 
-    if st.button("New user? Register"):
+    # 🔥 Forgot Password
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    if st.button("❓ Forgot Password"):
+        st.info("Reset Feature Coming Soon 🚀")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # 🔥 Register Redirect (Inside Card)
+    st.write("Don't have an account?")
+
+    if st.button("📝 Go To Register"):
         st.session_state.page = "register"
+        st.rerun()
+
+    # 🔥 Back Button
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    if st.button("⬅ Back"):
+        st.session_state.page = "landing"
+        st.rerun()
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# =====================================================
+# ================= REGISTER PAGE =====================
+# =====================================================
 
 
-# ---------------- DASHBOARD ----------------
-def dashboard_page():
 
-    st.success(f"Welcome, {st.session_state.username} 🎉")
+elif st.session_state.page == "register":
+    
+    #st.markdown("<div class='card'>",unsafe_allow_html=True)
+    st.title("📝 Register")
 
-    col1,col2 = st.columns(2)
-    with col1:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.subheader("👤 Account Info")
-        st.write("Username:", st.session_state.username)
-        st.write("Email:", st.session_state.email)
-        st.write("Last Login:", st.session_state.last_login)
-        st.markdown('</div>', unsafe_allow_html=True)
+    username = st.text_input("Username", key="reg_user")
+    email = st.text_input("Email", key="reg_email")
+    password = st.text_input("Password", type="password", key="reg_pass")
+    confirm_password = st.text_input("Confirm Password", type="password", key="reg_confirm")
 
-    with col2:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.subheader("📊 Quick Stats")
-        st.write("Images Processed:", st.session_state.image_count)
-        st.markdown('</div>', unsafe_allow_html=True)
+    remember = st.checkbox("🔔 Remember Me")
+    terms = st.checkbox("✔ I Agree To Terms")
 
-    st.markdown("---")
+    
+    
+    if st.button("Create Account", key="register_btn"):
 
-    menu = st.radio("Navigation",
-        ["🎨 Image Processing","💳 Payment History","⚙ Profile Settings"])
+       if not username or not email or not password or not confirm_password:
+        st.error("All fields are required ❗")
 
-    # -------- IMAGE PROCESSING --------
-    if menu == "🎨 Image Processing":
+       elif len(password) < 8:
+        st.error("Password must be at least 8 characters long 🔐")
 
-        uploaded_file = st.file_uploader("Upload Image", type=["jpg","jpeg","png"])
+       elif not any(char.isupper() for char in password):
+        st.error("Password must contain at least 1 uppercase letter 🔠")
 
-        if uploaded_file is not None:
-            image = Image.open(uploaded_file)
+       elif not any(char.islower() for char in password):
+        st.error("Password must contain at least 1 lowercase letter 🔡")
 
-            effect = st.selectbox("Choose Effect",
-                                  ["Cartoon","Pencil Sketch","Black & White"])
+       elif not any(char.isdigit() for char in password):
+        st.error("Password must contain at least 1 number 🔢")
 
-            col1,col2 = st.columns(2)
-            with col1:
-                st.image(image, caption="Original", use_column_width=True)
+       elif password != confirm_password:
+        st.error("Passwords Do Not Match ❌")
 
-            start = time.time()
+       elif not terms:
+        st.error("Accept Terms First ❗")
 
-            if effect == "Cartoon":
-                result = cartoon_effect(image)
-            elif effect == "Pencil Sketch":
-                result = pencil_sketch_effect(image)
-            else:
-                result = black_white_effect(image)
+       else:
+        try:
+            cursor.execute("""
+            INSERT INTO users(username,email,password,failed_attempts,account_locked)
+            VALUES(?,?,?,?,?)
+            """,(username,email,hash_password(password),0,0))
 
-            end = time.time()
-            st.session_state.image_count += 1
+            conn.commit()
+
+            st.success("Account Created 🎉")
+            st.session_state.page = "login"
+            st.rerun()
+
+        except Exception as e:
+            st.error(f"Error: {e}")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    st.write("Already have an account?")
+
+    if st.button("🔐 Go To Login"):
+      st.session_state.page = "login"
+      st.rerun()
+
+    if st.button("⬅ Back"):
+        st.session_state.page = "landing"
+        st.rerun()
+
+    st.markdown("</div>",unsafe_allow_html=True)
+
+# =====================================================
+# ================= DASHBOARD =========================
+# =====================================================
+
+elif st.session_state.logged_in:
+
+    st.sidebar.title("📌 Navigation")
+
+    page = st.sidebar.radio(
+        "Menu",
+        ["Image Process","Gallery","Profile","Logout"]
+    )
+
+    st.title(f"Welcome {st.session_state.user} 👋")
+
+    # ---------- LOGOUT ----------
+    if page == "Logout":
+        st.session_state.logged_in = False
+        st.session_state.page = "landing"
+        st.rerun()
+
+    # ---------- PROFILE ----------
+    elif page == "Profile":
+
+        cursor.execute("""
+        SELECT username,email,last_login
+        FROM users
+        WHERE username=?
+        """,(st.session_state.user,))
+
+        data = cursor.fetchone()
+
+        if data:
+            st.write("Username:",data[0])
+            st.write("Email:",data[1])
+            st.write("Last Login:",data[2])
+
+    # ---------- IMAGE PROCESS ----------
+    
+    elif page == "Image Process":
+
+     uploaded = st.file_uploader(
+        "📤 Upload Image (Max 10MB)",
+        type=["jpg","png","jpeg"]
+    )
+
+     if uploaded:
+
+        if uploaded.size > 10*1024*1024:
+            st.error("❌ File Too Large (Max 10MB)")
+            st.stop()
+
+        image = Image.open(uploaded).convert("RGB")
+        img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+
+        st.success("✅ Image Uploaded Successfully")
+        st.write("📦 Size:", round(uploaded.size/1024/1024,2), "MB")
+
+        # ================= STYLE SELECTION =================
+
+        st.markdown("## 🎨 Choose Style")
+
+        style = st.radio(
+            "Select Effect",
+            [
+                "Classic Cartoon",
+                "Sketch Advanced",
+                "Pencil Color",
+                "Black & White",
+                "Oil Painting",
+                "Edge Only"
+            ],
+            help="Select style and click Process Image"
+        )
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.subheader("Original")
+            st.image(image, use_container_width=True)
+
+        process = st.button("🚀 Process Image")
+
+        processed = image
+
+        if process:
+
+            with st.spinner("⏳ Processing Image..."):
+
+                # -------- EFFECT LOGIC --------
+
+                if style == "Classic Cartoon":
+                    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                    edges = cv2.Canny(gray,100,200)
+                    color = cv2.bilateralFilter(img,9,300,300)
+                    cartoon = cv2.bitwise_and(color,color,mask=edges)
+                    processed = Image.fromarray(cartoon)
+
+                elif style == "Sketch Advanced":
+                    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                    inverted = 255 - gray
+                    blur = cv2.GaussianBlur(inverted,(21,21),0)
+                    sketch = cv2.divide(gray,255-blur,scale=256)
+                    sketch = cv2.convertScaleAbs(sketch,alpha=1.5,beta=0)
+                    processed = Image.fromarray(sketch)
+
+                elif style == "Pencil Color":
+                    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                    inverted = 255 - gray
+                    blur = cv2.GaussianBlur(inverted,(21,21),0)
+                    sketch = cv2.divide(gray,255-blur,scale=256)
+                    sketch = cv2.cvtColor(sketch, cv2.COLOR_GRAY2BGR)
+
+                    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+                    hsv[:,:,1] = hsv[:,:,1] * 0.5
+                    reduced = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+
+                    final = cv2.bitwise_and(reduced, sketch)
+                    processed = Image.fromarray(
+                        cv2.cvtColor(final, cv2.COLOR_BGR2RGB)
+                    )
+
+                elif style == "Black & White":
+                    bw = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                    processed = Image.fromarray(bw)
+
+                elif style == "Oil Painting":
+                    try:
+                        oil = cv2.xphoto.oilPainting(img,7,1)
+                        processed = Image.fromarray(
+                            cv2.cvtColor(oil, cv2.COLOR_BGR2RGB)
+                        )
+                    except:
+                        st.error("Install opencv-contrib-python for Oil Effect")
+
+                elif style == "Edge Only":
+                    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                    edges = cv2.Canny(gray,100,200)
+                    processed = Image.fromarray(edges)
+
+            # -------- DISPLAY AFTER PROCESS --------
 
             with col2:
-                st.image(result, caption=effect, use_column_width=True)
+                st.subheader("Processed")
+                st.image(processed, use_container_width=True)
 
-            st.success(f"Processing Time: {round(end-start,2)} sec")
+            # -------- DOWNLOAD PROCESS --------
 
-            result_img = Image.fromarray(result)
-            st.download_button("📥 Download",
-                               data=result_img.tobytes(),
-                               file_name="processed.png",
-                               mime="image/png")
+            buffer = BytesIO()
+            processed.save(buffer, format="PNG")
 
-    elif menu == "💳 Payment History":
-        st.info("No payments yet.")
+            st.download_button(
+                "⬇ Download Processed Image",
+                buffer.getvalue(),
+                "processed.png",
+                "image/png"
+            )
 
-    elif menu == "⚙ Profile Settings":
-        st.subheader("Update Profile")
-        new_username = st.text_input("Change Username")
-        if st.button("Update"):
-            st.success("Profile updated (demo only).")
+            # -------- SIDE BY SIDE DOWNLOAD --------
 
-    if st.button("Logout"):
-        st.session_state.clear()
-        st.session_state.page = "landing"
+            combined = Image.new(
+                "RGB",
+                (image.width + processed.width, image.height)
+            )
+
+            combined.paste(image,(0,0))
+            combined.paste(processed,(image.width,0))
+
+            combo_buffer = BytesIO()
+            combined.save(combo_buffer, format="PNG")
+
+            st.download_button(
+                "📥 Download Before/After Comparison",
+                combo_buffer.getvalue(),
+                "comparison.png",
+                "image/png"
+            )
+
+        st.button("🔄 Try Another Style", key="reset_btn")
+     
+     # ================= TASK 13 : IMAGE COMPARISON MODULE =================
+
+if 'processed' in locals():
+
+    st.markdown("---")
+    st.subheader("🔍 Image Comparison Module")
+
+    # ================= SIDE BY SIDE VIEW =================
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("### 🟢 Original")
+        st.image(image, use_container_width=True)
+
+        st.write("📏 Dimensions:", image.size)
+        st.write("📦 File Size:", round(uploaded.size/1024/1024,2), "MB")
+
+    with col2:
+        st.markdown("### 🔵 Processed")
+        st.image(processed, use_container_width=True)
+
+        # Processing time
+        start_time = datetime.now()
+        processing_time = datetime.now() - start_time
+        st.write("⏱ Processing Time:", processing_time)
+
+    # ================= SLIDER EFFECT =================
+
+    st.markdown("## 🎚 Before / After Slider")
+
+    slider = st.slider("Slide to Compare", 0, 100, 50)
+
+    if slider:
+
+        width = image.width
+        height = image.height
+
+        before = image.resize((width, height))
+        after = processed.resize((width, height))
+
+        split = int(width * (slider / 100))
+
+        blended = Image.new("RGB", (width, height))
+        blended.paste(before.crop((0,0,split,height)), (0,0))
+        blended.paste(after.crop((split,0,width,height)), (split,0))
+
+        st.image(blended, use_container_width=True)
+
+    # ================= DOWNLOAD COMPARISON =================
+
+    combined = Image.new(
+        "RGB",
+        (image.width + processed.width, image.height)
+    )
+
+    combined.paste(image, (0,0))
+    combined.paste(processed, (image.width,0))
+
+    buffer = BytesIO()
+    combined.save(buffer, format="PNG")
+
+    st.download_button(
+        "📥 Download Side-by-Side Comparison",
+        buffer.getvalue(),
+        "comparison.png",
+        "image/png"
+    )
+
+    # ================= IMAGE STATISTICS =================
+
+    st.markdown("## 📊 Image Statistics")
+
+    def image_stats(img):
+        gray = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
+        brightness = np.mean(gray)
+        contrast = np.std(gray)
+        return brightness, contrast
+
+    b1, c1 = image_stats(image)
+    b2, c2 = image_stats(processed)
+
+    col3, col4 = st.columns(2)
+
+    with col3:
+        st.write("🔹 Original Brightness:", round(b1,2))
+        st.write("🔹 Original Contrast:", round(c1,2))
+
+    with col4:
+        st.write("🔹 Processed Brightness:", round(b2,2))
+        st.write("🔹 Processed Contrast:", round(c2,2))
 
 
-# ---------------- ROUTING ----------------
-if st.session_state.page == "landing":
-    landing_page()
-elif st.session_state.page == "register":
-    register_page()
-elif st.session_state.page == "login":
-    login_page()
-elif st.session_state.page == "dashboard":
-    if st.session_state.logged_in:
-        dashboard_page()
-    else:
-        st.session_state.page = "login"
+
+    # ---------- GALLERY ----------  
+elif 'page' in locals() and page == "Gallery":
+
+        st.subheader("🖼 History")
+
+        cursor.execute("""
+        SELECT image_path,effect,created_at
+        FROM image_history
+        WHERE username=?
+        ORDER BY id DESC
+        """,(st.session_state.user,))
+
+        rows = cursor.fetchall()
+
+        for row in rows:
+            st.write("Effect:",row[1])
+            st.write("Created:",row[2])
+            try:
+                img = Image.open(row[0])
+                st.image(img,width=250)
+            except:
+                pass
+            st.divider()
