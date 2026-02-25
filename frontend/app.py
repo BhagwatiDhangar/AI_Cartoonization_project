@@ -9,10 +9,23 @@ from datetime import datetime
 import uuid
 import os
 import random
+import sys
+from download_module import prepare_download
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__),"..")))
+from db import store_image_history
+from download_module import cleanup_old_files
+from image_processing.color_cartoon import cartoon_base
+from edge_detection import cartoon_edges
 
 # ================= PAGE CONFIG =================
 st.set_page_config(page_title="AI Cartoon Studio", layout="wide")
-
+st.markdown("""
+<style>
+[data-testid="stAppViewContainer"]{
+    background-color:#0f172a;
+}
+</style>
+""", unsafe_allow_html=True)
 # ================= FOLDER =================
 if not os.path.exists("uploads"):
     os.makedirs("uploads")
@@ -55,137 +68,192 @@ if "page" not in st.session_state:
 
 if "user" not in st.session_state:
     st.session_state.user = ""
-
+if "user_id" not in st.session_state:
+   st.session_state.user_id=None
 def hash_password(p):
     return hashlib.sha256(p.encode()).hexdigest()
 
 # ================= STYLE =================
+
 st.markdown("""
 <style>
+
+/* ===== APP BACKGROUND ===== */
 [data-testid="stAppViewContainer"]{
-    background: linear-gradient(-45deg,#0f2027,#203a43,#2c5364,#1b1b1b);
-    background-size:400% 400%;
-    animation: gradientBG 12s ease infinite;
+    background: linear-gradient(135deg,#0f172a,#1e293b);
 }
-@keyframes gradientBG{
-    0%{background-position:0% 50%;}
-    50%{background-position:100% 50%;}
-    100%{background-position:0% 50%;}
-}
+
+/* ===== REMOVE DEFAULT HEADER ===== */
+header {visibility:hidden;}
+
+/* ===== MAIN CONTAINER WIDTH CONTROL ===== */
 .block-container{
-    padding-top:2rem !important;
-}
-.box{
-    background: rgba(255,255,255,0.2);
-    backdrop-filter: blur(10px);
-    padding:20px;
-    border-radius:15px;
-    text-align:center;
-    font-weight:bold;
-    color:white;
-    border:1px solid rgba(255,255,255,0.3);
-}
-.box:hover{
-    transform:scale(1.05);
-}
-.card{
-    background:white;
-    padding:40px;
-    border-radius:20px;
-    width:420px;
+    max-width:1100px;
     margin:auto;
-    box-shadow:0px 10px 30px rgba(0,0,0,0.3);
+    padding-top:3rem;
+    padding-bottom:3rem;
 }
+
+/* ===== FEATURE GRID ===== */
+.features-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(250px,1fr));
+    gap:25px;
+    margin-top:40px;
+}
+
+/* ===== FEATURE CARD ===== */
+.feature-card{
+    background:#1e293b;
+    border:1px solid #334155;
+    border-radius:18px;
+    padding:30px;
+    text-align:center;
+    color:#f1f5f9;
+    font-size:16px;
+    font-weight:500;
+    transition:all 0.3s ease;
+}
+
+.feature-card:hover{
+    transform:translateY(-6px);
+    border-color:#6366f1;
+    box-shadow:0 10px 25px rgba(99,102,241,0.4);
+}
+
+
+/* ===== BUTTON STYLE ===== */
 .stButton>button{
-    background:#00b4d8;
+    border-radius:12px;
+    height:48px;
+    font-weight:600;
+    background:#6366f1;
     color:white;
-    border-radius:10px;
-    padding:8px 16px;
     border:none;
 }
+
 .stButton>button:hover{
-    background:#0077b6;
+    background:#4f46e5;
 }
+
+/* ===== INPUT STYLE ===== */
 input{
     border-radius:10px !important;
-            }
-
-
-            
-/* ✅ REMOVE TOP SPACE COMPLETELY */
-.block-container {
-    padding-top: 0rem !important;
-    padding-bottom: 0rem !important;
-}
-
-/* ✅ REMOVE HEADER SPACE */
-header {
-    visibility: hidden;
-}
-
-/* ✅ FULL WIDTH */
-.main {
-    padding: 0rem !important;
-}
-
-/* ✅ REMOVE SIDEBAR EXTRA GAP */
-[data-testid="stSidebar"] {
-    padding-top: 0rem !important;
-
-}
-
-
-/* ✅ Remove Top Padding Only */
-.block-container {
-    padding-top: 0px !important;
-}
-
-/* ✅ Hide Default Header Text */
-header {
-    visibility: hidden;
-}
-
-/* ✅ Full Width */
-.main {
-    padding: 0px !important;
 }
 
 </style>
-
-""",unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
 # =====================================================
 # ================= LANDING PAGE ======================
 # =====================================================
+if not st.session_state.logged_in and st.session_state.page == "landing":
+    st.markdown("""
+<style>
+body {
+    background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+}
+
+.block-container {
+    padding-top: 3rem;
+    padding-bottom: 3rem;
+}
+
+.hero-title {
+    font-size: 55px;
+    font-weight: 800;
+    text-align: center;
+    background: linear-gradient(90deg,#00f5ff,#00c6ff);
+    -webkit-background-clip: text;
+    color: transparent;
+}
+
+.hero-sub {
+    text-align: center;
+    font-size: 18px;
+    opacity: 0.8;
+    margin-bottom: 50px;
+}
+
+.features-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 25px;
+    margin-top: 40px;
+}
+
+.feature-card {
+    background: rgba(255,255,255,0.06);
+    backdrop-filter: blur(12px);
+    padding: 30px 20px;
+    border-radius: 18px;
+    text-align: center;
+    transition: 0.3s;
+}
+
+.feature-card:hover {
+    transform: translateY(-6px);
+    background: rgba(255,255,255,0.12);
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+    
+
+    # ===== HERO SECTION =====
+    st.markdown("""
+<div class="hero-title">🎨 AI Cartoon Studio</div>
+<div class="hero-sub">
+Transform your images into stunning AI art styles.<br>
+Fast • Secure • Professional
+</div>
+""", unsafe_allow_html=True)
+
+
+    
+
+
+    # ===== FEATURES SECTION =====
 
 if not st.session_state.logged_in and st.session_state.page == "landing":
 
-    st.title("🎨 AI Cartoon Studio")
-    st.subheader("Modern Image Processing Platform 🚀")
+    st.markdown("## 🚀 Why Choose Us")
 
-    col1,col2,col3,col4 = st.columns(4)
+    features = [
+    "🔥 Classic Cartoon",
+    "✏ Sketch Effect",
+    "🖌 Pencil Color",
+    "⚡ Fast Processing",
+    "📂 Image History",
+    "🔐 Secure Authentication"
 
-    features = ["🔥 Cartoon","🧠 Edge","🎨 Sketch","🔐 Secure"]
+]
 
-    for i,col in enumerate([col1,col2,col3,col4]):
-        with col:
-            st.markdown(f"<div class='box'>{features[i]}</div>",
-                        unsafe_allow_html=True)
+    feature_html = "<div class='features-grid'>"
 
-    st.markdown("<br><br><br>",unsafe_allow_html=True)
+    for f in features:
+     feature_html += f"<div class='feature-card'>{f}</div>"
 
-    colA,colB = st.columns(2)
+    feature_html += "</div>"
 
-    with colA:
-        if st.button("🔐 Login", use_container_width=True):
-            st.session_state.page = "login"
-            st.rerun()
+    st.markdown(feature_html, unsafe_allow_html=True)
 
-    with colB:
-        if st.button("📝 Register", use_container_width=True):
-            st.session_state.page = "register"
-            st.rerun()
+        
+            
 
+    # ===== CTA BUTTONS =====
+    st.markdown("<div style='height:50px;'></div>",unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1,2,1])
+
+    with col2:
+       if st.button("🚀 Login", use_container_width=True):
+        st.session_state.page = "login"
+        st.rerun()
+
+       if st.button("📝 Register", use_container_width=True):
+        st.session_state.page = "register"
+        st.rerun()
 # =====================================================
 # ================= LOGIN PAGE ========================
 # ====================================================
@@ -384,16 +452,18 @@ elif st.session_state.logged_in:
 
     # ---------- IMAGE PROCESS ----------
     
+     
+            
     elif page == "Image Process":
 
      uploaded = st.file_uploader(
         "📤 Upload Image (Max 10MB)",
-        type=["jpg","png","jpeg"]
+        type=["jpg", "png", "jpeg"]
     )
 
-     if uploaded:
+    if "uploaded" in locals() and uploaded is not None:
 
-        if uploaded.size > 10*1024*1024:
+        if uploaded.size > 10 * 1024 * 1024:
             st.error("❌ File Too Large (Max 10MB)")
             st.stop()
 
@@ -401,9 +471,7 @@ elif st.session_state.logged_in:
         img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
 
         st.success("✅ Image Uploaded Successfully")
-        st.write("📦 Size:", round(uploaded.size/1024/1024,2), "MB")
-
-        # ================= STYLE SELECTION =================
+        st.write("📦 Size:", round(uploaded.size / 1024 / 1024, 2), "MB")
 
         st.markdown("## 🎨 Choose Style")
 
@@ -416,8 +484,7 @@ elif st.session_state.logged_in:
                 "Black & White",
                 "Oil Painting",
                 "Edge Only"
-            ],
-            help="Select style and click Process Image"
+            ]
         )
 
         col1, col2 = st.columns(2)
@@ -426,40 +493,35 @@ elif st.session_state.logged_in:
             st.subheader("Original")
             st.image(image, use_container_width=True)
 
-        process = st.button("🚀 Process Image")
+        if st.button("🚀 Process Image"):
 
-        processed = image
-
-        if process:
-
-            with st.spinner("⏳ Processing Image..."):
-
-                # -------- EFFECT LOGIC --------
+            with st.spinner("🤖 AI is processing..."):
 
                 if style == "Classic Cartoon":
                     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-                    edges = cv2.Canny(gray,100,200)
-                    color = cv2.bilateralFilter(img,9,300,300)
-                    cartoon = cv2.bitwise_and(color,color,mask=edges)
-                    processed = Image.fromarray(cartoon)
+                    edges = cv2.Canny(gray, 100, 200)
+                    color = cv2.bilateralFilter(img, 9, 300, 300)
+                    cartoon = cv2.bitwise_and(color, color, mask=edges)
+                    processed = Image.fromarray(
+                        cv2.cvtColor(cartoon, cv2.COLOR_BGR2RGB)
+                    )
 
                 elif style == "Sketch Advanced":
                     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
                     inverted = 255 - gray
-                    blur = cv2.GaussianBlur(inverted,(21,21),0)
-                    sketch = cv2.divide(gray,255-blur,scale=256)
-                    sketch = cv2.convertScaleAbs(sketch,alpha=1.5,beta=0)
+                    blur = cv2.GaussianBlur(inverted, (21, 21), 0)
+                    sketch = cv2.divide(gray, 255 - blur, scale=256)
                     processed = Image.fromarray(sketch)
 
                 elif style == "Pencil Color":
                     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
                     inverted = 255 - gray
-                    blur = cv2.GaussianBlur(inverted,(21,21),0)
-                    sketch = cv2.divide(gray,255-blur,scale=256)
+                    blur = cv2.GaussianBlur(inverted, (21, 21), 0)
+                    sketch = cv2.divide(gray, 255 - blur, scale=256)
                     sketch = cv2.cvtColor(sketch, cv2.COLOR_GRAY2BGR)
 
                     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-                    hsv[:,:,1] = hsv[:,:,1] * 0.5
+                    hsv[:, :, 1] = hsv[:, :, 1] * 0.5
                     reduced = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
 
                     final = cv2.bitwise_and(reduced, sketch)
@@ -473,58 +535,87 @@ elif st.session_state.logged_in:
 
                 elif style == "Oil Painting":
                     try:
-                        oil = cv2.xphoto.oilPainting(img,7,1)
+                        oil = cv2.xphoto.oilPainting(img, 7, 1)
                         processed = Image.fromarray(
                             cv2.cvtColor(oil, cv2.COLOR_BGR2RGB)
                         )
                     except:
-                        st.error("Install opencv-contrib-python for Oil Effect")
+                        st.error("Install opencv-contrib-python")
+                        st.stop()
 
                 elif style == "Edge Only":
                     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-                    edges = cv2.Canny(gray,100,200)
+                    edges = cv2.Canny(gray, 100, 200)
                     processed = Image.fromarray(edges)
 
-            # -------- DISPLAY AFTER PROCESS --------
+            # Save processed image in session
+            st.session_state.processed = processed
+            st.session_state.style = style
+
+        # ---------------- DISPLAY AFTER PROCESS ----------------
+        if "processed" in st.session_state:
 
             with col2:
                 st.subheader("Processed")
-                st.image(processed, use_container_width=True)
+                st.image(st.session_state.processed, use_container_width=True)
 
-            # -------- DOWNLOAD PROCESS --------
+            # ---------------- PREPARE DOWNLOAD ----------------
+            if st.button("📥 Prepare Download"):
 
-            buffer = BytesIO()
-            processed.save(buffer, format="PNG")
+                file_path = prepare_download(
+                    user_id=st.session_state.user_id,
+                    original_filename=uploaded.name,
+                    image=st.session_state.processed,
+                    style_name=st.session_state.style,
+                    format="PNG",
+                    quality="high",
+                    is_paid=False
+                )
 
-            st.download_button(
-                "⬇ Download Processed Image",
-                buffer.getvalue(),
-                "processed.png",
-                "image/png"
-            )
+                if file_path:
+                    st.session_state.download_file = file_path
 
-            # -------- SIDE BY SIDE DOWNLOAD --------
+                    store_image_history(
+                        st.session_state.user_id,
+                        uploaded.name,
+                        st.session_state.style
+                    )
+
+                    st.success("Download Ready ✅")
+
+        # ---------------- ACTUAL DOWNLOAD ----------------
+        if "download_file" in st.session_state:
+
+            with open(st.session_state.download_file, "rb") as f:
+                st.download_button(
+                    "⬇ Download Image",
+                    f,
+                    file_name=os.path.basename(st.session_state.download_file),
+                    mime="image/png"
+                )
+
+        # ---------------- BEFORE/AFTER ----------------
+        if "processed" in st.session_state:
 
             combined = Image.new(
                 "RGB",
-                (image.width + processed.width, image.height)
+                (image.width + st.session_state.processed.width, image.height)
             )
 
-            combined.paste(image,(0,0))
-            combined.paste(processed,(image.width,0))
+            combined.paste(image, (0, 0))
+            combined.paste(st.session_state.processed, (image.width, 0))
 
-            combo_buffer = BytesIO()
-            combined.save(combo_buffer, format="PNG")
+            buffer = BytesIO()
+            combined.save(buffer, format="PNG")
 
             st.download_button(
-                "📥 Download Before/After Comparison",
-                combo_buffer.getvalue(),
+                "📥 Download Before/After",
+                buffer.getvalue(),
                 "comparison.png",
                 "image/png"
             )
 
-        st.button("🔄 Try Another Style", key="reset_btn")
-     
+        
      # ================= TASK 13 : IMAGE COMPARISON MODULE =================
 
 if 'processed' in locals():
@@ -598,11 +689,23 @@ if 'processed' in locals():
 
     st.markdown("## 📊 Image Statistics")
 
+    
     def image_stats(img):
-        gray = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
-        brightness = np.mean(gray)
-        contrast = np.std(gray)
-        return brightness, contrast
+
+     img_array = np.array(img)
+ 
+    # Agar image already grayscale hai
+     if len(img_array.shape) == 2:
+        gray = img_array
+     else:
+        gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+
+     brightness = np.mean(gray)
+     contrast = np.std(gray)
+
+     return brightness, contrast
+    
+
 
     b1, c1 = image_stats(image)
     b2, c2 = image_stats(processed)
